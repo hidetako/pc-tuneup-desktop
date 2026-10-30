@@ -42,7 +42,7 @@ Windows の「インストールされているアプリ」から削除できま
 ## 中身
 
 ```text
-pc-tuneup-installer/
+pc-tuneup-desktop/
 ├── app/                        本体 (hidetako/pc-tuneup への submodule)
 ├── src/
 │   ├── Launcher.cs             PCTuneUp.exe の中身。管理者権限で本体を起動するだけ
@@ -62,11 +62,11 @@ UAC のダイアログにアプリ名とアイコンが出ること、スター�
 ## 自分でビルドする
 
 ```powershell
-git clone --recursive https://github.com/hidetako/pc-tuneup-installer.git
+git clone --recursive https://github.com/hidetako/pc-tuneup-desktop.git
 ```
 
 ```powershell
-cd pc-tuneup-installer
+cd pc-tuneup-desktop
 ```
 
 ```powershell
