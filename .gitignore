@@ -1,0 +1,5 @@
+dist/
+obj/
+*.user
+Thumbs.db
+.DS_Store

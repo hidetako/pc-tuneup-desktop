@@ -1,0 +1,54 @@
+name: build
+
+# タグ (v1.0.0 など) を押すとビルドして Release に添付する。
+# 手動実行 (Actions タブの Run workflow) でもビルドだけ確認できる。
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: チェックアウト (本体 submodule も含む)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 本体のテスト
+        shell: powershell
+        run: .\app\tests\Invoke-Tests.ps1
+
+      - name: Inno Setup を入れる
+        run: choco install innosetup -y --no-progress
+
+      - name: ビルド
+        shell: pwsh
+        run: |
+          $version = $null
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
+          if ($version) { .\build\Build.ps1 -Version $version } else { .\build\Build.ps1 }
+
+      - name: 成果物を保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-tuneup-dist
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+      - name: Release に添付
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            (Get-Item dist\*-setup.exe).FullName `
+            (Get-Item dist\*-portable.zip).FullName `
+            --title $env:GITHUB_REF_NAME --generate-notes
