@@ -21,6 +21,18 @@ Windows 11 向けメンテナンスツール **[PC TuneUp](https://github.com/hi
 「詳細情報」→「実行」で続行できます。コード署名証明書を付けていないためで、
 中身はすべてテキストの PowerShell スクリプトなので内容を確認できます。
 
+### コマンドラインから使う
+
+点検だけを自動化したい場合など、GUI を出さずに使うときは、インストール先の
+`PCTuneUp.cmd` を使ってください（`PCTuneUp.exe` でも引数は渡せますが、
+コンソールが別ウィンドウで開いて閉じてしまいます）。
+
+```powershell
+& "$env:ProgramFiles\PC TuneUp\PCTuneUp.cmd" -Scan
+```
+
+使える引数は[本体の README](https://github.com/hidetako/pc-tuneup#コマンドライン)にあります。
+
 ### アンインストール
 
 Windows の「インストールされているアプリ」から削除できます。

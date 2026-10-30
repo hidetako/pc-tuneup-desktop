@@ -40,6 +40,7 @@ internal static class Launcher
         {
             using (Process p = Process.Start(psi))
             {
+                if (p == null) { Fail("PowerShell を起動できませんでした。"); return 1; }
                 if (!cli) { return 0; }   // GUI はそのまま手を離す
                 p.WaitForExit();
                 return p.ExitCode;
