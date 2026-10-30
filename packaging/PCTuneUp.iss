@@ -43,7 +43,13 @@ SolidCompression=yes
 WizardStyle=modern
 ; 修復には管理者権限が要るので、インストールも管理者で行う
 PrivilegesRequired=admin
+; 64 ビット環境では Program Files (x86) ではなく Program Files に入れる。
+; 指定子は Inno Setup 6.3 で変わったので、どちらのバージョンでも通るようにする。
+#if Ver >= EncodeVer(6,3,0)
 ArchitecturesInstallIn64BitMode=x64compatible
+#else
+ArchitecturesInstallIn64BitMode=x64
+#endif
 ; Windows 10 1809 以降
 MinVersion=10.0.17763
 DisableProgramGroupPage=yes
