@@ -78,8 +78,12 @@ Filename: "powershell.exe"; \
   StatusMsg: "毎週の自動メンテナンスを登録しています..."; \
   Flags: runhidden waituntilterminated; Tasks: weeklytask
 ; インストール直後に起動するか
+; shellexec を外さないこと。postinstall の項目は昇格していない元のユーザーとして
+; 実行されるため、requireAdministrator の PCTuneUp.exe を CreateProcess で起動すると
+; 「CreateProcess エラー: コード 740 (要求された操作には管理者特権が必要です)」で失敗する。
+; ShellExecute 経由にすると UAC の確認が出て、正しく昇格して起動する。
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent shellexec
 
 [UninstallRun]
 ; 登録していた場合に備えて、アンインストール時にタスクを消す (無ければ何も起きない)
