@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     PC TuneUp の配布物を作る。
@@ -10,12 +10,15 @@
     .NET SDK などを別途入れる必要はありません。
 .PARAMETER Version
     付けない場合は app\lib\Core.ps1 に書かれているバージョンを使います。
+.PARAMETER Repo
+    更新の確認先 (GitHub の owner/repo)。配布物に update-channel.json として埋め込みます。
 .PARAMETER SkipInstaller
     インストーラーを作らず、portable zip だけ作ります。
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string]$Repo = 'hidetako/pc-tuneup-desktop',
     [switch]$SkipInstaller
 )
 
@@ -27,6 +30,32 @@ $obj   = Join-Path $root 'obj'
 $stage = Join-Path $dist 'stage\PCTuneUp'
 
 function Step { param([string]$Message) Write-Host "==> $Message" -ForegroundColor Cyan }
+
+function Write-UpdateChannel {
+    <#
+      配布物に同梱する update-channel.json を書く。
+      本体はこのファイルがあるときだけ更新を確認する (開発用クローンには無い)。
+      Kind は portable / setup で挙動が変わるため、zip と インストーラーで書き分ける。
+      JSON なので BOM は付けない。
+    #>
+    param([Parameter(Mandatory)][ValidateSet('portable', 'setup')][string]$Kind)
+    $obj = [ordered]@{
+        Repo    = $Repo
+        Version = $Version
+        Kind    = $Kind
+        Built   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    $path = Join-Path $stage 'update-channel.json'
+    # 5.1 と 7 で同じ形になるよう PSCustomObject にしてから変換する
+    [System.IO.File]::WriteAllText($path, ([pscustomobject]$obj | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Find-Iscc {
+    @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
 
 # ---- 1. 本体 (submodule) があるか ----------------------------------------
 if (-not (Test-Path -LiteralPath (Join-Path $app 'PCTuneUp.ps1'))) {
@@ -56,6 +85,8 @@ foreach ($f in 'PCTuneUp.ps1', 'PCTuneUp.cmd', 'pc_maintenance_icon.ico', 'READM
 foreach ($d in 'lib', 'gui') {
     Copy-Item -LiteralPath (Join-Path $app $d) -Destination $stage -Recurse
 }
+Write-UpdateChannel -Kind 'portable'
+Step "更新の確認先: $Repo"
 
 # ---- 5. ランチャー exe をコンパイル ---------------------------------------
 Step 'PCTuneUp.exe をコンパイルしています'
@@ -101,35 +132,42 @@ Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
 Step "できました: $zip"
 
 # ---- 7. インストーラー ----------------------------------------------------
-if ($SkipInstaller) { Step 'インストーラーは -SkipInstaller によりスキップしました'; return }
-
-$iscc = @(
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-
-if (-not $iscc) {
-    Step 'Inno Setup が見つからないので winget で入れます'
-    try {
-        & winget install --id JRSoftware.InnoSetup --silent --accept-package-agreements --accept-source-agreements
-    } catch {
-        Write-Warning "winget での導入に失敗しました: $($_.Exception.Message)"
+if ($SkipInstaller) {
+    Step 'インストーラーは -SkipInstaller によりスキップしました'
+} else {
+    $iscc = Find-Iscc
+    if (-not $iscc) {
+        Step 'Inno Setup が見つからないので winget で入れます'
+        try {
+            & winget install --id JRSoftware.InnoSetup --silent --accept-package-agreements --accept-source-agreements
+        } catch {
+            Write-Warning "winget での導入に失敗しました: $($_.Exception.Message)"
+        }
+        $iscc = Find-Iscc
     }
-    $iscc = @(
-        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($iscc) {
+        Step 'インストーラーをビルドしています'
+        # インストーラーで入れた版は、更新もインストーラーで行える
+        Write-UpdateChannel -Kind 'setup'
+        & $iscc "/DAppVersion=$Version" "/DStageDir=$stage" "/DOutputDir=$dist" "/DRepoRoot=$root" (Join-Path $root 'packaging\PCTuneUp.iss')
+        if ($LASTEXITCODE -ne 0) { throw "ISCC.exe が失敗しました (終了コード $LASTEXITCODE)" }
+    } else {
+        Write-Warning 'Inno Setup が無いためインストーラーは作れませんでした。portable zip だけ出来ています。'
+        Write-Warning 'https://jrsoftware.org/isdl.php から入れるか、-SkipInstaller を付けてこの警告を消してください。'
+    }
 }
 
-if (-not $iscc) {
-    Write-Warning 'Inno Setup が無いためインストーラーは作れませんでした。portable zip だけ出来ています。'
-    Write-Warning 'https://jrsoftware.org/isdl.php から入れるか、-SkipInstaller を付けてこの警告を消してください。'
-    return
+# ---- 8. チェックサム ------------------------------------------------------
+# 本体の更新機能が、ダウンロードしたファイルの破損・取り違えを検出するのに使う。
+Step 'SHA256SUMS.txt を作っています'
+$artifacts = @(Get-ChildItem -LiteralPath $dist -File | Where-Object { $_.Extension -in '.exe', '.zip' } | Sort-Object Name)
+$lines = foreach ($a in $artifacts) {
+    '{0}  {1}' -f (Get-FileHash -LiteralPath $a.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $a.Name
 }
-
-Step 'インストーラーをビルドしています'
-& $iscc "/DAppVersion=$Version" "/DStageDir=$stage" "/DOutputDir=$dist" "/DRepoRoot=$root" (Join-Path $root 'packaging\PCTuneUp.iss')
-if ($LASTEXITCODE -ne 0) { throw "ISCC.exe が失敗しました (終了コード $LASTEXITCODE)" }
+[System.IO.File]::WriteAllText(
+    (Join-Path $dist 'SHA256SUMS.txt'),
+    (($lines -join "`r`n") + "`r`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
 
 Step '完成'
 Get-ChildItem -LiteralPath $dist -File | ForEach-Object { '  {0}  ({1:N1} MB)' -f $_.Name, ($_.Length / 1MB) }

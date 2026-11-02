@@ -33,6 +33,29 @@ jobs:
           if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
           if ($version) { .\build\Build.ps1 -Version $version } else { .\build\Build.ps1 }
 
+      - name: 配布物の確認
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 本体の読み取り関数で、ビルドが埋め込んだ update-channel.json を実際に解釈できるか見る
+          . .\app\lib\Core.ps1
+          $staged = Get-UpdateChannel -Path 'dist\stage\PCTuneUp\update-channel.json'
+          if (-not $staged) { throw 'update-channel.json を読み取れません' }
+          if ($staged.Kind -ne 'setup') { throw "インストーラー用の Kind が setup ではありません: $($staged.Kind)" }
+          if (-not $staged.Repo) { throw 'update-channel.json に Repo がありません' }
+          Write-Host "更新の確認先: $($staged.Repo) / Kind=$($staged.Kind) / Version=$($staged.Version)"
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = (Get-Item dist\*-portable.zip).FullName
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try { $entries = @($archive.Entries | ForEach-Object { $_.FullName }) } finally { $archive.Dispose() }
+          if ($entries -notcontains 'PCTuneUp/update-channel.json') { throw 'zip に update-channel.json が入っていません' }
+
+          $sums = @(Get-Content dist\SHA256SUMS.txt | Where-Object { $_ -match '\S' })
+          $files = @(Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe', '.zip' })
+          if ($sums.Count -ne $files.Count) { throw "SHA256SUMS.txt の行数が合いません ($($sums.Count) 行 / 配布物 $($files.Count) 件)" }
+          $sums | ForEach-Object { Write-Host "  $_" }
+
       - name: 成果物を保存
         uses: actions/upload-artifact@v4
         with:
@@ -40,6 +63,7 @@ jobs:
           path: |
             dist/*.exe
             dist/*.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Release に添付
@@ -48,7 +72,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # SHA256SUMS.txt も添付する。アプリの更新機能がこれで整合性を確かめる。
           gh release create $env:GITHUB_REF_NAME `
             (Get-Item dist\*-setup.exe).FullName `
             (Get-Item dist\*-portable.zip).FullName `
+            (Get-Item dist\SHA256SUMS.txt).FullName `
             --title $env:GITHUB_REF_NAME --generate-notes

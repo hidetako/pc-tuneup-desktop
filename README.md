@@ -14,12 +14,37 @@ Windows 11 向けメンテナンスツール **[PC TuneUp](https://github.com/hi
 | インストーラー | `PCTuneUp-<version>-setup.exe` | 普通に使う場合。スタートメニューに登録され、アンインストールもできます |
 | インストール不要版 | `PCTuneUp-<version>-portable.zip` | 展開してすぐ使いたい、USB メモリで持ち運びたい場合 |
 
+`SHA256SUMS.txt` も一緒に添付しています。ダウンロードしたファイルの確認に使えます
+(アプリの更新機能も、これと同じファイルで整合性を確かめています)。
+
+```powershell
+Get-FileHash .\PCTuneUp-1.1.0-setup.exe -Algorithm SHA256
+```
+
 どちらも起動すると管理者権限を求めるダイアログが出ます。点検・修復のほとんどが
 管理者権限を必要とするためです。
 
 初回起動時に「WindowsによってPCが保護されました」と出た場合は、
 「詳細情報」→「実行」で続行できます。コード署名証明書を付けていないためで、
 中身はすべてテキストの PowerShell スクリプトなので内容を確認できます。
+
+### 更新
+
+起動するとバックグラウンドで [Releases](../../releases) を確認し、新しい版があれば
+ウィンドウ上部に「更新する」のバーが出ます。押すまでは何もダウンロードしません。
+
+- インストーラー版は、インストーラーを落として実行し、アプリを終了します。
+  ウィザードの最後にある「PC TuneUp を実行する」でそのまま起動できます。
+- インストール不要版は、動作中のフォルダーを自分で置き換えるのが危ういため、
+  リリースページを開くだけにしています。展開して手動で入れ替えてください。
+- ダウンロードしたファイルは、サイズと `SHA256SUMS.txt` の SHA256 を照合します。
+  リリースと同じ経路で配っているチェックサムなので、転送中の破損や取り違えは防げますが、
+  GitHub アカウントの乗っ取りまでは防げません。
+- 確認を止めたいときは `-NoUpdateCheck` を付けて起動してください。
+
+更新の確認先は、ビルド時に `update-channel.json` として配布物へ埋め込まれます
+(`Build.ps1 -Repo <owner/repo>`)。本体リポジトリをそのままクローンした場合は
+このファイルが無いので、更新の確認は行いません。
 
 ### コマンドラインから使う
 
@@ -50,7 +75,7 @@ pc-tuneup-desktop/
 ├── packaging/
 │   └── PCTuneUp.iss            Inno Setup のインストーラー定義
 ├── build/
-│   └── Build.ps1               exe → zip → setup.exe を作る
+│   └── Build.ps1               exe → zip → setup.exe → SHA256SUMS.txt を作る
 └── .github/workflows/release.yml   タグを押すとビルドして Release に添付
 ```
 
@@ -73,7 +98,7 @@ cd pc-tuneup-desktop
 .\build\Build.ps1
 ```
 
-`dist\` に zip と setup.exe ができます。
+`dist\` に zip と setup.exe、`SHA256SUMS.txt` ができます。
 
 - `--recursive` を付け忘れた場合は `git submodule update --init --recursive` を実行してください。
 - exe のコンパイルには Windows 同梱の `csc.exe`（.NET Framework 4.x）を使うため、
