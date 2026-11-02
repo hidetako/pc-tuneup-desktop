@@ -34,7 +34,10 @@ jobs:
           if ($version) { .\build\Build.ps1 -Version $version } else { .\build\Build.ps1 }
 
       - name: 配布物の確認
-        shell: powershell
+        # shell: powershell (5.1) は不可。run: の中身は BOM 無し UTF-8 の一時 .ps1 として
+        # 書き出されるが、5.1 はそれを ANSI コードページで読むため日本語が化けて構文エラーになる。
+        # pwsh (7) は BOM 無し UTF-8 を正しく読む。5.1 での動作確認は「本体のテスト」が担う。
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           # 本体の読み取り関数で、ビルドが埋め込んだ update-channel.json を実際に解釈できるか見る
@@ -45,7 +48,8 @@ jobs:
           if (-not $staged.Repo) { throw 'update-channel.json に Repo がありません' }
           Write-Host "更新の確認先: $($staged.Repo) / Kind=$($staged.Kind) / Version=$($staged.Version)"
 
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          # 5.1 では必要、7 では既に読み込まれている
+          try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch { }
           $zip = (Get-Item dist\*-portable.zip).FullName
           $archive = [IO.Compression.ZipFile]::OpenRead($zip)
           try { $entries = @($archive.Entries | ForEach-Object { $_.FullName }) } finally { $archive.Dispose() }
