@@ -1,12 +1,20 @@
 name: build
 
-# タグ (v1.0.0 など) を押すとビルドして Release に添付する。
-# 手動実行 (Actions タブの Run workflow) でもビルドだけ確認できる。
+# リリースの出し方は 3 通り。どれも同じビルドを通る。
+#   1. Actions タブの Run workflow で version を入力する (タグと Release をここで作る)
+#   2. GitHub の Releases 画面で新しいタグを付けて公開する (ビルドして、その Release に添付する)
+#   3. 手元からタグ (v1.2.0 など) を push する (Release を作って添付する)
+# version を空のまま手動実行した場合と pull request では、ビルドの確認だけ行い公開しない。
 on:
   push:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: '公開するバージョン (例 1.2.0)。空ならビルドの確認だけで、公開しません'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -27,11 +35,28 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: ビルド
+        id: build
         shell: pwsh
+        env:
+          # 入力値はスクリプトに直接埋め込まず、環境変数で受け取る
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = $null
-          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
+          $publish = $false
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+            $publish = $true
+          } elseif ($env:INPUT_VERSION) {
+            $version = $env:INPUT_VERSION.Trim() -replace '^[vV]', ''
+            $publish = $true
+          }
+          if ($version -and $version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "バージョンは 1.2.0 のように 3 つの数字で指定してください: '$version'"
+          }
           if ($version) { .\build\Build.ps1 -Version $version } else { .\build\Build.ps1 }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: 配布物の確認
         # shell: powershell (5.1) は不可。run: の中身は BOM 無し UTF-8 の一時 .ps1 として
@@ -40,13 +65,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # 本体の読み取り関数で、ビルドが埋め込んだ update-channel.json を実際に解釈できるか見る
-          . .\app\lib\Core.ps1
+          # 配布物に入る本体そのものを読み込み、ビルドが埋め込んだ update-channel.json を
+          # 本体の読み取り関数で実際に解釈できるか見る
+          . .\dist\stage\PCTuneUp\lib\Core.ps1
           $staged = Get-UpdateChannel -Path 'dist\stage\PCTuneUp\update-channel.json'
           if (-not $staged) { throw 'update-channel.json を読み取れません' }
           if ($staged.Kind -ne 'setup') { throw "インストーラー用の Kind が setup ではありません: $($staged.Kind)" }
           if (-not $staged.Repo) { throw 'update-channel.json に Repo がありません' }
           Write-Host "更新の確認先: $($staged.Repo) / Kind=$($staged.Kind) / Version=$($staged.Version)"
+
+          # 本体が名乗るバージョンと配布物のバージョンが一致していること。
+          # ずれていると、更新した後も「新しいバージョンがあります」と出続ける。
+          if ($Global:PCTuneUp.Version -ne $staged.Version) {
+            throw "本体のバージョン ($($Global:PCTuneUp.Version)) が配布物 ($($staged.Version)) と一致しません"
+          }
+          $setup = Get-Item dist\*-setup.exe
+          if ($setup.Name -ne "PCTuneUp-$($staged.Version)-setup.exe") { throw "インストーラーの名前が想定と違います: $($setup.Name)" }
+          Write-Host "本体のバージョン: $($Global:PCTuneUp.Version)"
 
           # 5.1 では必要、7 では既に読み込まれている
           try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch { }
@@ -70,15 +105,39 @@ jobs:
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Release に添付
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Release を公開
+        if: steps.build.outputs.publish == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          # 「無い」ことを終了コードで確かめる呼び出しがあるので、非ゼロ終了を例外にしない
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = "v$env:VERSION"
           # SHA256SUMS.txt も添付する。アプリの更新機能がこれで整合性を確かめる。
-          gh release create $env:GITHUB_REF_NAME `
-            (Get-Item dist\*-setup.exe).FullName `
-            (Get-Item dist\*-portable.zip).FullName `
-            (Get-Item dist\SHA256SUMS.txt).FullName `
-            --title $env:GITHUB_REF_NAME --generate-notes
+          $files = @(
+            (Get-Item dist\*-setup.exe).FullName
+            (Get-Item dist\*-portable.zip).FullName
+            (Get-Item dist\SHA256SUMS.txt).FullName
+          )
+
+          gh release view $tag 2>$null | Out-Null
+          $exists = ($LASTEXITCODE -eq 0)
+
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            # 公開済みのファイルを黙って差し替えない。利用者の手元にある版と中身が食い違ってしまう。
+            if ($exists) { throw "$tag は既に公開されています。別のバージョン番号を指定してください。" }
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
+            if ($LASTEXITCODE -eq 0) { throw "タグ $tag は既にあります。別のバージョン番号を指定してください。" }
+            # タグはここで、いまビルドしたコミットに付く
+            gh release create $tag @files --title $tag --generate-notes --target $env:GITHUB_SHA
+          } elseif ($exists) {
+            # Releases 画面から先に Release を作った場合は、そこへ添付する
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title $tag --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Release の公開に失敗しました (終了コード $LASTEXITCODE)" }
+          Write-Host "公開しました: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/releases/tag/$tag"

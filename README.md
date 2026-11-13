@@ -109,33 +109,47 @@ cd pc-tuneup-desktop
 
 ## リリースする手順
 
-1. 本体に変更を入れたら、ここの submodule を進める。
+ブラウザーだけで公開できます。手元に clone は要りません。
+
+1. GitHub の **Actions** タブ → 左の **build** → 右上の **Run workflow** を開く。
+2. **version** に公開するバージョン（例 `1.2.0`）を入れて **Run workflow** を押す。
+
+1 分ほどで、本体のテスト → exe のコンパイル → zip とインストーラーの作成 → タグ `v1.2.0` の作成 →
+Release の公開まで進みます。利用者のアプリは次に起動したとき、この Release を見つけて更新を案内します。
+
+- **version を空のまま実行すると、ビルドの確認だけ行い、公開しません。** 公開前の試運転に使えます。
+- バージョンは `1.2.0` のように 3 つの数字で指定します。アプリが名乗るバージョンもこの値になるので、
+  本体の `lib\Core.ps1` を書き換える必要はありません。
+- 既に公開済みのバージョンを指定すると、何も変更せずに失敗します。公開したファイルを差し替えることはありません。
+- 公開されるのは、実行時点の `main` の内容です。
+
+### 本体の変更を取り込むとき
+
+本体（`hidetako/pc-tuneup`）に入れた変更は、ここの submodule を進めるまで配布物に入りません。
+これだけは手元での操作が必要です。
 
 ```powershell
-git -C app pull origin main
+git -C C:\dev\pc-tuneup-desktop pull
 ```
 
 ```powershell
-git add app
+git -C C:\dev\pc-tuneup-desktop submodule update --remote app
 ```
 
 ```powershell
-git commit -m "Update app to latest"
-```
-
-2. 先に GitHub Actions の「build」を手動実行して、ビルドが通ることを確認する。
-3. 通ったらタグを押す。バージョンは本体の `lib\Core.ps1` に合わせる。
-
-```powershell
-git tag v1.0.0
+git -C C:\dev\pc-tuneup-desktop commit -am "Update app to latest"
 ```
 
 ```powershell
-git push origin main --tags
+git -C C:\dev\pc-tuneup-desktop push
 ```
 
-タグを押すと Windows ランナーで本体のテスト → exe のコンパイル → zip と
-インストーラーの作成まで走り、Release に添付されます。
+### ほかの出し方
+
+- **Releases 画面から**: 「Draft a new release」で新しいタグ（`v1.2.0`）を付けて公開すると、
+  同じビルドが走り、その Release にファイルが添付されます。リリースノートを自分で書きたいとき向け。
+  添付が終わるまでの 1 分ほどは、ファイルの無い Release が見えます。
+- **手元からタグを push**: `git tag -a v1.2.0 -m "PC TuneUp 1.2.0"` → `git push origin v1.2.0`。
 
 ## ライセンス
 

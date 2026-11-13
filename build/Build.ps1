@@ -50,6 +50,21 @@ function Write-UpdateChannel {
     [System.IO.File]::WriteAllText($path, ([pscustomobject]$obj | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Set-StagedVersion {
+    <#
+      配布物の lib\Core.ps1 に書かれたバージョンを、ビルドするバージョンに合わせる。
+      本体はこの値を「現在のバージョン」として更新の有無を判定するため、ここがずれると
+      更新した後も「新しいバージョンがあります」と出続けてしまう。
+      Windows PowerShell 5.1 で日本語が化けないよう、BOM 付き UTF-8 で書き戻す。
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Version)
+    $text = [System.IO.File]::ReadAllText($Path)
+    $pattern = New-Object System.Text.RegularExpressions.Regex "(Version\s*=\s*')[0-9]+\.[0-9]+\.[0-9]+(')"
+    if (-not $pattern.IsMatch($text)) { throw "バージョンの行が見つかりません: $Path" }
+    $new = $pattern.Replace($text, ('${1}' + $Version + '${2}'), 1)
+    [System.IO.File]::WriteAllText($Path, $new, (New-Object System.Text.UTF8Encoding($true)))
+}
+
 function Find-Iscc {
     @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
@@ -85,6 +100,7 @@ foreach ($f in 'PCTuneUp.ps1', 'PCTuneUp.cmd', 'pc_maintenance_icon.ico', 'READM
 foreach ($d in 'lib', 'gui') {
     Copy-Item -LiteralPath (Join-Path $app $d) -Destination $stage -Recurse
 }
+Set-StagedVersion -Path (Join-Path $stage 'lib\Core.ps1') -Version $Version
 Write-UpdateChannel -Kind 'portable'
 Step "更新の確認先: $Repo"
 
